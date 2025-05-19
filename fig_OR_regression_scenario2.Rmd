@@ -1,0 +1,405 @@
+```{r}
+library(tidyverse)
+library(gam)
+library(gridExtra)
+library(mgcv)
+```
+
+# Models
+```{r}
+fit_models <- function(df) {
+  list(
+    "1Untransformed Logit" = glm(
+      formula = eventstatus ~ immunity_model * factor(high_risk),
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "2Transformed Logit" = glm(
+      formula = eventstatus ~ log((1 - immunity_model) * high_risk),
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "3Untransformed GAM" = gam(
+      formula = eventstatus ~ 
+      s(immunity_model, k = 5, by = factor(high_risk)) + 
+      factor(high_risk),
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "4Transformed GAM" = gam(
+      formula = eventstatus ~ s(log((1 - immunity_model) * high_risk), k = 5),
+      data = df,
+      family = binomial(link = "logit")
+    )
+  )
+}
+```
+
+#Single day
+```{r}
+df_original <- read_csv('simulation_subtask_1_sim_12_day_600.csv')
+df_original$high_risk <- as.integer(df_original$high_risk + 1) # make high risk to be 1 and 2 so that can be multiplied to the risk function
+n = 600
+rec.pd <- 7
+```
+
+
+
+## Negative test design
+```{r}
+sample_data <- function(data_frame){
+  df_symp_positive <- data_frame %>% 
+    subset(
+        (status == "infectious") &
+        (Symptomatic == 1) &
+          (immunity_model != 1)
+    )
+  
+  df_negative <- data_frame %>% 
+    subset(
+      ((status == "susceptible")
+      |
+      (status == "exposed")
+      |
+      (status == "recovered"))
+      &
+        (immunity_model != 1)
+    )
+  
+  n_match <- 4
+  
+  nm <- ifelse(nrow(df_symp_positive)>nrow(df_negative)/n_match,1,n_match)
+  
+  df_negative <- df_negative %>%
+    sample_n(nrow(df_symp_positive)*nm, replace = FALSE)
+  
+  return(df_symp_positive %>% bind_rows(df_negative)) 
+}
+
+df <- sample_data(df_original)
+fits <- fit_models(df)
+
+newdf <- expand.grid(
+  immunity_model = seq(0.001, 0.999, 0.001),
+  high_risk = c(1, 2)
+)
+
+
+p <- lapply(fits, function(x) 
+  exp(predict(x, newdata = newdf)) / 
+    exp(predict(x, newdata = transform(newdf, immunity_model = 0, high_risk = 1)))
+)
+
+newdf$Truth <- (1 - newdf$immunity_model) * newdf$high_risk
+
+
+newdf <- bind_cols(newdf, p)
+
+
+plot_normal <- newdf %>%
+  pivot_longer(cols = -c(immunity_model, high_risk), names_to = "name", values_to = "value") %>%
+  filter(high_risk == 1) %>% 
+  mutate(
+    name = recode(name,
+                  `1Untransformed Logit` = "Untransformed Logit",
+                  `2Transformed Logit` = "Transformed Logit",
+                  `3Untransformed GAM` = "Untransformed GAM",
+                  `4Transformed GAM` = "Transformed GAM",
+                  `Truth` = "Truth"),
+    name = factor(name, levels = c("Truth", 
+                                   "Untransformed Logit", 
+                                   "Transformed Logit", 
+                                   "Untransformed GAM", 
+                                   "Transformed GAM"))
+  ) %>%
+  ggplot(aes(x = immunity_model, y = value, color = name, linetype = name)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  labs(
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    title = "Normal Risk Group"
+  ) +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12) 
+  ) +
+  scale_y_continuous(limits = c(0, 1),
+                     labels = scales::label_number(scale = 1, accuracy = 0.001))
+
+
+plot_high_risk <- newdf %>%
+  pivot_longer(cols = -c(immunity_model, high_risk), names_to = "name", values_to = "value") %>%
+  filter(high_risk == 2) %>%
+  mutate(
+    name = recode(name,
+                  `1Untransformed Logit` = "Untransformed Logit",
+                  `2Transformed Logit` = "Transformed Logit",
+                  `3Untransformed GAM` = "Untransformed GAM",
+                  `4Transformed GAM` = "Transformed GAM",
+                  `Truth` = "Truth"),
+    name = factor(name, levels = c("Truth", 
+                                   "Untransformed Logit", 
+                                   "Transformed Logit", 
+                                   "Untransformed GAM", 
+                                   "Transformed GAM"))
+  ) %>%
+  ggplot(aes(x = immunity_model, y = value, color = name, linetype = name)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  labs(
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    title = "High Risk Group"
+  ) +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12) 
+  ) +
+  scale_y_continuous(limits = c(0, 2.5),
+                     labels = scales::label_number(scale = 1, accuracy = 0.001))
+
+
+plot_normal
+plot_high_risk
+```
+
+
+#Merged days
+## Negative test design
+```{r}
+steps <- seq(500,590,10)
+results_list <- lapply(steps, function(step) {
+  file_path <- paste0("simulation_subtask_1_sim_12_day_", step, ".csv")
+  df_original <- read.csv(file_path)
+  df_original$day <- step
+  
+  df_infectious <- subset(df_original, 
+                          (status == "infectious") &
+                            (Symptomatic == 1) &
+                            (immunity_model != 1))
+  
+  df_uninfected <- subset(df_original, 
+                          (immunity_model != 1) & 
+                            (
+                          (status == "susceptible")
+                          |
+                            (status == "exposed")
+                          |
+                            (status == "recovered"))
+  )
+
+  list(infectious = df_infectious, uninfected = df_uninfected)
+})
+
+infectious_data <- do.call(rbind, lapply(results_list, `[[`, "infectious"))
+uninfected_data <- do.call(rbind, lapply(results_list, `[[`, "uninfected"))
+```
+
+```{r}
+sample_data <- function(infectious_data, uninfected_data) {
+  
+  n_match <- 4
+  final_data <- data.frame() 
+  
+
+  unique_days <- unique(infectious_data$day)
+  
+
+  for (day in unique_days) {
+
+    day_infected <- infectious_data[infectious_data$day == day, ]
+    day_uninfected <- uninfected_data[uninfected_data$day == day, ]
+    
+    num_infected <- nrow(day_infected)
+    
+    if (nrow(day_uninfected) > num_infected * n_match) {
+      sampled_uninfected <- day_uninfected[sample(nrow(day_uninfected), num_infected * n_match, replace = FALSE), ]
+    } else {
+      sampled_uninfected <- day_uninfected
+    }
+    
+    day_data <- rbind(day_infected, sampled_uninfected)
+
+    final_data <- rbind(final_data, day_data)
+  }
+  
+  return(final_data)
+}
+
+df <- sample_data(infectious_data, uninfected_data)
+df$high_risk <- as.integer(df$high_risk + 1) # make high risk to be 1 and 2 so that can be multiplied to the risk function
+fits <- fit_models(df)
+
+newdf <- expand.grid(
+  immunity_model = seq(0.001, 0.999, 0.001),
+  high_risk = c(1, 2)
+)
+
+
+p <- lapply(fits, function(x) 
+  exp(predict(x, newdata = newdf)) / 
+    exp(predict(x, newdata = transform(newdf, immunity_model = 0, high_risk = 1)))
+)
+
+newdf$Truth <- (1 - newdf$immunity_model) * newdf$high_risk
+
+newdf <- bind_cols(newdf, p)
+
+
+long_merged <- newdf %>%
+  pivot_longer(cols = -c(immunity_model, high_risk), names_to = "name", values_to = "value") %>%
+  mutate(
+    name = recode(name,
+                  `1Untransformed Logit` = "Untransformed Logit",
+                  `2Transformed Logit` = "Transformed Logit",
+                  `3Untransformed GAM` = "Untransformed GAM",
+                  `4Transformed GAM` = "Transformed GAM",
+                  `Truth` = "Truth"),
+    name = factor(name, levels = c("Truth", 
+                                   "Untransformed Logit", 
+                                   "Transformed Logit", 
+                                   "Untransformed GAM", 
+                                   "Transformed GAM")),
+    high_risk = factor(high_risk, levels = c(1, 2), labels = c("Normal", "High Risk"))
+  )
+
+merged_plot_normal <- long_merged %>%
+  filter(high_risk == "Normal") %>%
+  ggplot(aes(x = immunity_model, y = value, color = name, linetype = name)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  labs(
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    title = "Normal Risk Group"
+  ) +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12) 
+  ) +
+  scale_y_continuous(limits = c(0, 1),
+                     labels = scales::label_number(scale = 1, accuracy = 0.001))
+
+
+merged_plot_high <- long_merged %>%
+  filter(high_risk == "High Risk") %>%
+  ggplot(aes(x = immunity_model, y = value, color = name, linetype = name)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  labs(
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    title = "High Risk Group"
+  ) +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12) 
+  ) +
+  scale_y_continuous(limits = c(0, 2.5),
+                     labels = scales::label_number(scale = 1, accuracy = 0.001))
+
+merged_plot_normal
+merged_plot_high
+
+```
+
+
+```{r}
+infection_metrics_plot <- grid.arrange(plot_normal, merged_plot_normal,
+                                      plot_high_risk, merged_plot_high, nrow = 2)
+ggsave("linear_OR_plot_tnd_bus.svg", plot = infection_metrics_plot, width = 13, height = 8)
+```
+

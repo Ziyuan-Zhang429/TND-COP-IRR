@@ -1,0 +1,791 @@
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(gam)
+library(gridExtra)
+```
+
+# Models
+```{r}
+fit_models <- function(df) {
+  list(
+    "Untransformed Logit" = glm(
+      formula = eventstatus ~ immunity_model,
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "Transformed Logit" = glm(
+      formula = eventstatus ~ log(1-immunity_model),
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "Untransformed GAM" = gam(
+      formula = eventstatus ~ s(immunity_model, 5),
+      data = df,
+      family = binomial(link = "logit")
+    ),
+    "Transformed GAM" = gam(
+      formula = eventstatus ~ s(log(1-immunity_model), 5),
+      data = df,
+      family = binomial(link = "logit")
+    )
+  )
+}
+```
+
+#TND
+##Single 600, balanced antibody distribution
+```{r}
+df_original <- read_csv('simulation_subtask_1_sim_10_day_600.csv')
+
+sample_data <- function(data_frame){
+  df_symp_positive <- data_frame %>% 
+    subset(
+        (status == "infectious") &
+        (Symptomatic == 1) &
+          (immunity_model != 1)
+    )
+  
+  df_negative <- data_frame %>% 
+    subset(
+      ((status == "susceptible")
+      |
+      (status == "exposed")
+      |
+      (status == "recovered"))
+      &
+        (immunity_model != 1)
+    )
+  
+  n_match <- 4
+  
+  nm <- ifelse(nrow(df_symp_positive)>nrow(df_negative)/n_match,1,n_match)
+  
+  df_negative <- df_negative %>%
+    sample_n(nrow(df_symp_positive)*nm, replace = FALSE)
+  
+  return(df_symp_positive %>% bind_rows(df_negative)) 
+}
+
+df <- sample_data(df_original)
+df$immunity_model <- round(df$immunity_model, 2)
+df <- df %>% subset(immunity_model != 1)
+fits <- fit_models(df)
+
+newdf <- data.frame(immunity_model = seq(0, 1, 0.01))
+newdf$Truth <- 1 - newdf$immunity_model
+
+p <-
+  lapply(fits, function(x) 
+    exp(predict(x, newdata = newdf)) / 
+      exp(predict(x, newdata = transform(newdf, immunity_model = 0))))
+newdf <- bind_cols(newdf, p)
+
+total_entries <- nrow(df_original)
+
+line_data <- newdf %>%
+  pivot_longer(cols = -immunity_model, names_to = "name", values_to = "value") %>%
+  mutate(
+    name = factor(name, levels = c("Truth", 
+                                    "Untransformed Logit", 
+                                    "Transformed Logit", 
+                                    "Untransformed GAM", 
+                                    "Transformed GAM"))
+  )
+
+odds_ratio_single_balance_tnd <- ggplot() +
+  
+  geom_histogram(
+    data = df_original, 
+    aes(
+      x = immunity_model, 
+      y = ..count../total_entries * 2,
+      fill = immunity_model
+    ), 
+    binwidth = 0.1, 
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = line_data, 
+    aes(
+      x = immunity_model, 
+      y = value, 
+      color = name, 
+      linetype = name
+    ), 
+    size = 1
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  scale_fill_brewer(
+    name = "Immunity Model",
+    palette = "Set2"
+  ) +
+  labs(
+    title = "B",
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    y.sec = "Proportion"
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1, accuracy = 0.01),
+    sec.axis = sec_axis(
+      ~ . / 2,
+      name = "Proportion",
+      labels = scales::label_number(scale = 1, accuracy = 0.01)
+    )
+  ) +
+  guides(
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 1),
+    fill = guide_legend(order = 2)
+  )
+
+print(odds_ratio_single_balance_tnd)
+```
+
+##Single 150, unbalanced antibody distribution
+```{r}
+df_original <- read_csv('simulation_subtask_1_sim_10_day_150.csv')
+
+sample_data <- function(data_frame){
+  df_symp_positive <- data_frame %>% 
+    subset(
+        (status == "infectious") &
+        (Symptomatic == 1) &
+          (immunity_model != 1)
+    )
+  
+  df_negative <- data_frame %>% 
+    subset(
+      ((status == "susceptible")
+      |
+      (status == "exposed")
+      |
+      (status == "recovered"))
+      &
+        (immunity_model != 1)
+    )
+  
+  n_match <- 4
+  
+  nm <- ifelse(nrow(df_symp_positive)>nrow(df_negative)/n_match,1,n_match)
+  
+  df_negative <- df_negative %>%
+    sample_n(nrow(df_symp_positive)*nm, replace = FALSE)
+  
+  return(df_symp_positive %>% bind_rows(df_negative)) 
+}
+
+df <- sample_data(df_original)
+df$immunity_model <- round(df$immunity_model, 2)
+df <- df %>% subset(immunity_model != 1)
+fits <- fit_models(df)
+
+newdf <- data.frame(immunity_model = seq(0, 1, 0.01))
+newdf$Truth <- 1 - newdf$immunity_model
+
+p <-
+  lapply(fits, function(x) 
+    exp(predict(x, newdata = newdf)) / 
+      exp(predict(x, newdata = transform(newdf, immunity_model = 0))))
+newdf <- bind_cols(newdf, p)
+
+total_entries <- nrow(df_original)
+
+line_data <- newdf %>%
+  pivot_longer(cols = -immunity_model, names_to = "name", values_to = "value") %>%
+  mutate(
+    name = factor(name, levels = c("Truth", 
+                                    "Untransformed Logit", 
+                                    "Transformed Logit", 
+                                    "Untransformed GAM", 
+                                    "Transformed GAM"))
+  )
+
+odds_ratio_single_unbalance_tnd <- ggplot() +
+  
+  geom_histogram(
+    data = df_original, 
+    aes(
+      x = immunity_model, 
+      y = ..count../total_entries * 2,
+      fill = immunity_model
+    ), 
+    binwidth = 0.1, 
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = line_data, 
+    aes(
+      x = immunity_model, 
+      y = value, 
+      color = name, 
+      linetype = name
+    ), 
+    size = 1
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  scale_fill_brewer(
+    name = "Immunity Model",
+    palette = "Set2"
+  ) +
+  labs(
+    title = "A",
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    y.sec = "Proportion"
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1, accuracy = 0.01),
+    sec.axis = sec_axis(
+      ~ . / 2,
+      name = "Proportion",
+      labels = scales::label_number(scale = 1, accuracy = 0.01)
+    )
+  ) +
+  guides(
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 1),
+    fill = guide_legend(order = 2)
+  )
+
+print(odds_ratio_single_unbalance_tnd)
+```
+
+```{r}
+distribution_plot <- grid.arrange(odds_ratio_single_unbalance_tnd, odds_ratio_single_balance_tnd,  nrow = 1)
+ggsave("distribution_plot3.svg", plot = distribution_plot, width = 13, height = 4)
+```
+
+##Compiled 500-590, balanced antibody distribution
+```{r}
+steps <- seq(500,590,10)
+results_list <- lapply(steps, function(step) {
+  file_path <- paste0("simulation_subtask_1_sim_10_day_", step, ".csv")
+  df_original <- read.csv(file_path)
+  df_original$day <- step
+  
+  # Categorize as infectious
+  df_infectious <- subset(df_original, 
+                          (status == "infectious") &
+                            (Symptomatic == 1) &
+                            (immunity_model != 1))
+  
+  # Categorize as uninfected or exposed
+  df_uninfected <- subset(df_original, 
+                          (immunity_model != 1) & 
+                            (
+                          (status == "susceptible")
+                          |
+                            (status == "exposed")
+                          |
+                            (status == "recovered"))
+  )
+
+  list(infectious = df_infectious, uninfected = df_uninfected, original = df_original)
+})
+
+infectious_data <- do.call(rbind, lapply(results_list, `[[`, "infectious"))
+uninfected_data <- do.call(rbind, lapply(results_list, `[[`, "uninfected"))
+df_original <- do.call(rbind, lapply(results_list, `[[`, "original"))
+
+sample_data <- function(infectious_data, uninfected_data) {
+  
+  n_match <- 4
+  final_data <- data.frame()  
+  
+  unique_days <- unique(infectious_data$day)
+  
+  for (day in unique_days) {
+    day_infected <- infectious_data[infectious_data$day == day, ]
+    day_uninfected <- uninfected_data[uninfected_data$day == day, ]
+    
+    num_infected <- nrow(day_infected)
+    
+    if (nrow(day_uninfected) > num_infected * n_match) {
+      sampled_uninfected <- day_uninfected[sample(nrow(day_uninfected), num_infected * n_match, replace = FALSE), ]
+    } else {
+      sampled_uninfected <- day_uninfected
+    }
+    
+    day_data <- rbind(day_infected, sampled_uninfected)
+    
+    final_data <- rbind(final_data, day_data)
+  }
+  
+  return(final_data)
+}
+
+df <- sample_data(infectious_data, uninfected_data)
+fits <- fit_models(df)
+
+newdf <- data.frame(immunity_model = seq(0, 1, 0.01))
+newdf$Truth <- 1 - newdf$immunity_model
+
+p <-
+  lapply(fits, function(x) 
+    exp(predict(x, newdata = newdf)) / 
+      exp(predict(x, newdata = transform(newdf, immunity_model = 0))))
+newdf <- bind_cols(newdf, p)
+
+total_entries <- nrow(df_original)
+
+line_data <- newdf %>%
+  pivot_longer(cols = -immunity_model, names_to = "name", values_to = "value") %>%
+  mutate(
+    name = factor(name, levels = c("Truth", 
+                                    "Untransformed Logit", 
+                                    "Transformed Logit", 
+                                    "Untransformed GAM", 
+                                    "Transformed GAM"))
+  )
+
+odds_ratio_compile_balance_tnd <- ggplot() +
+  
+  geom_histogram(
+    data = df_original, 
+    aes(
+      x = immunity_model, 
+      y = ..count../total_entries * 2,
+      fill = immunity_model
+    ), 
+    binwidth = 0.1, 
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = line_data, 
+    aes(
+      x = immunity_model, 
+      y = value, 
+      color = name, 
+      linetype = name
+    ), 
+    size = 1
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  scale_fill_brewer(
+    name = "Immunity Model",
+    palette = "Set2"
+  ) +
+  labs(
+    title = "D",
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    y.sec = "Proportion"
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1, accuracy = 0.01),
+    sec.axis = sec_axis(
+      ~ . / 2,
+      name = "Proportion",
+      labels = scales::label_number(scale = 1, accuracy = 0.01)
+    )
+  ) +
+  guides(
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 1),
+    fill = guide_legend(order = 2)
+  )
+
+print(odds_ratio_compile_balance_tnd)
+```
+
+
+##Compiled 50-140, unbalanced antibody distribution
+```{r}
+steps <- seq(50,140,10)
+results_list <- lapply(steps, function(step) {
+  file_path <- paste0("simulation_subtask_1_sim_10_day_", step, ".csv")
+  df_original <- read.csv(file_path)
+  df_original$day <- step
+  
+  df_infectious <- subset(df_original, 
+                          (status == "infectious") &
+                            (Symptomatic == 1) &
+                            (immunity_model != 1))
+
+  df_uninfected <- subset(df_original, 
+                          (immunity_model != 1) & 
+                            (
+                          (status == "susceptible")
+                          |
+                            (status == "exposed")
+                          |
+                            (status == "recovered"))
+  )
+
+  list(infectious = df_infectious, uninfected = df_uninfected, original = df_original)
+})
+
+infectious_data <- do.call(rbind, lapply(results_list, `[[`, "infectious"))
+uninfected_data <- do.call(rbind, lapply(results_list, `[[`, "uninfected"))
+df_original <- do.call(rbind, lapply(results_list, `[[`, "original"))
+
+sample_data <- function(infectious_data, uninfected_data) {
+  
+  n_match <- 4
+  final_data <- data.frame()  
+  unique_days <- unique(infectious_data$day)
+  
+  for (day in unique_days) {
+    day_infected <- infectious_data[infectious_data$day == day, ]
+    day_uninfected <- uninfected_data[uninfected_data$day == day, ]
+    
+    num_infected <- nrow(day_infected)
+    
+    if (nrow(day_uninfected) > num_infected * n_match) {
+      sampled_uninfected <- day_uninfected[sample(nrow(day_uninfected), num_infected * n_match, replace = FALSE), ]
+    } else {
+      sampled_uninfected <- day_uninfected
+    }
+    
+    day_data <- rbind(day_infected, sampled_uninfected)
+    
+    final_data <- rbind(final_data, day_data)
+  }
+  
+  return(final_data)
+}
+
+df <- sample_data(infectious_data, uninfected_data)
+fits <- fit_models(df)
+
+newdf <- data.frame(immunity_model = seq(0, 1, 0.01))
+newdf$Truth <- 1 - newdf$immunity_model
+
+p <-
+  lapply(fits, function(x) 
+    exp(predict(x, newdata = newdf)) / 
+      exp(predict(x, newdata = transform(newdf, immunity_model = 0))))
+newdf <- bind_cols(newdf, p)
+
+total_entries <- nrow(df_original)
+
+line_data <- newdf %>%
+  pivot_longer(cols = -immunity_model, names_to = "name", values_to = "value") %>%
+  mutate(
+    name = factor(name, levels = c("Truth", 
+                                    "Untransformed Logit", 
+                                    "Transformed Logit", 
+                                    "Untransformed GAM", 
+                                    "Transformed GAM"))
+  )
+
+odds_ratio_compile_unbalance_tnd <- ggplot() +
+  
+  geom_histogram(
+    data = df_original, 
+    aes(
+      x = immunity_model, 
+      y = ..count../total_entries * 2,
+      fill = immunity_model
+    ), 
+    binwidth = 0.1, 
+    alpha = 0.3
+  ) +
+  geom_line(
+    data = line_data, 
+    aes(
+      x = immunity_model, 
+      y = value, 
+      color = name, 
+      linetype = name
+    ), 
+    size = 1
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "#66C2A5", 
+      "Transformed Logit" = "#FC8D62", 
+      "Untransformed GAM" = "#8DA0CB", 
+      "Transformed GAM" = "#E78AC3", 
+      "Truth" = "#000000"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Model", 
+    values = c(
+      "Untransformed Logit" = "longdash", 
+      "Transformed Logit" = "dashed", 
+      "Untransformed GAM" = "dotdash", 
+      "Transformed GAM" = "twodash", 
+      "Truth" = "solid"
+    )
+  ) +
+  scale_fill_brewer(
+    name = "Immunity Model",
+    palette = "Set2"
+  ) +
+  labs(
+    title = "C",
+    x = "Antibody level",
+    y = "Incidence rate ratio",
+    y.sec = "Proportion"
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1, accuracy = 0.01),
+    sec.axis = sec_axis(
+      ~ . / 2,
+      name = "Proportion",
+      labels = scales::label_number(scale = 1, accuracy = 0.01)
+    )
+  ) +
+  guides(
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 1),
+    fill = guide_legend(order = 2)
+  )
+
+print(odds_ratio_compile_unbalance_tnd)
+```
+
+```{r}
+distribution_plot <- grid.arrange(odds_ratio_compile_unbalance_tnd,odds_ratio_compile_balance_tnd,  nrow = 1)
+ggsave("distribution_plot4.svg", plot = distribution_plot, width = 13, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

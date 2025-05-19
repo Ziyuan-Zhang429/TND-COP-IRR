@@ -1,0 +1,240 @@
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(zoo)
+library(dplyr)
+library(scales)
+```
+
+```{r}
+steps <- seq(10,600,10)
+results_list <- lapply(steps, function(step) {
+  file_path <- paste0("simulation_subtask_1_sim_1_day_", step, ".csv")
+  df_original <- read.csv(file_path)
+  df_original$day <- step
+  rec.pd <- 7
+  df <- df_original
+  df <- df %>% subset(eventstatus == 0 | (eventstatus == 1 & immunity_start == day)) # restrict to only new exposed
+  df$immunity_model <- round(df$immunity_model, 2)
+  
+  list(data = df)
+})
+
+combined_data <- do.call(rbind, lapply(results_list, function(x) x$data))
+```
+
+#Immunity cut by 0.25
+```{r}
+combined_data$immunity_interval <- cut(
+  combined_data$immunity_model,
+  breaks = seq(0, 1, by = 0.25),
+  include.lowest = TRUE,
+  right = FALSE, 
+  labels = c("[0.00,0.25)", "[0.25,0.50)", "[0.50,0.75)", "[0.75,1.00]")
+)
+combined_data$immunity_interval[combined_data$immunity_model == 1] <- "[0.75,1.00]"
+
+summary_data <- combined_data %>%
+  group_by(day, immunity_interval) %>%
+  summarise(total_infected = sum(eventstatus == 1), total_uninfected = sum(eventstatus == 0), .groups = 'drop') %>%
+  mutate(odds_of_infection = total_infected / total_uninfected)
+
+summary_data_overall <- combined_data %>%
+  group_by(day) %>%
+  summarise(total_infected = sum(eventstatus == 1), total_uninfected = sum(eventstatus == 0), .groups = 'drop') %>%
+  mutate(odds_of_infection = total_infected / total_uninfected)
+summary_data_overall$immunity_interval <- "Average"
+```
+
+
+```{r}
+summary_data <- add_row(summary_data,
+                           day = 0,
+                           immunity_interval = "[0.00,0.25)",
+                           total_infected = 25,
+                           total_uninfected = 49950,
+                        odds_of_infection = 0.0005,
+                           .before = 1)
+summary_data <- summary_data %>%
+  group_by(immunity_interval) %>%
+  mutate(spline_fit = predict(smooth.spline(day, odds_of_infection, df=20), day)$y) 
+
+summary_data_overall <- add_row(summary_data_overall,
+                           day = 0,
+                           immunity_interval = "Average",
+                           total_infected = 25,
+                           total_uninfected = 49950,
+                        odds_of_infection = 0.0005,
+                           .before = 1)
+summary_data_overall <- summary_data_overall %>%
+  mutate(spline_fit = predict(smooth.spline(day, odds_of_infection, df=20), day)$y)
+
+
+summary_data <- rbind(summary_data, summary_data_overall)
+
+legend_order <- c("[0.00,0.25)", "[0.25,0.50)", "[0.50,0.75)", "[0.75,1.00]", "Average")
+custom_colors <- c("[0.00,0.25)" = "#b7e6a5",
+                   "[0.25,0.50)" = "#7ccba2",
+                   "[0.50,0.75)" = "#089099",
+                   "[0.75,1.00]" = "#045275",
+                   "Average" = "#909090")
+
+
+spline <- ggplot(summary_data, aes(x=day, y=odds_of_infection, color=immunity_interval)) +
+  geom_point(alpha=0.5) +
+  # Separate line for overall data with a dashed line
+  geom_line(data = summary_data %>% filter(immunity_interval == "Average"),
+            aes(y = spline_fit), size=1, linetype="dashed") +
+  # Lines for other intervals
+  geom_line(data = summary_data %>% filter(immunity_interval != "Average"),
+            aes(y = spline_fit), size=1, linetype="solid") +
+  scale_x_continuous(breaks = seq(min(summary_data$day), max(summary_data$day), by = 50)) +
+  scale_y_continuous(limits = c(0, NA),
+                     labels = scales::label_number(scale = 1, accuracy = 0.01)) +
+  scale_color_manual(values = custom_colors, breaks = legend_order, labels = legend_order) +
+  labs(
+    x="Day",
+    y="Odds of infection",
+    color="Antibody interval") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+spline
+ggsave("time_risk_immunity_spline.svg", plot = spline, width = 8, height = 6)
+```
+
+
+# Prevalence of infectious individuals
+```{r}
+steps <- seq(10,600,10)
+results_list <- lapply(steps, function(step) {
+  file_path <- paste0("50000_simulation_1028_linear_", step, ".csv")
+  df_original <- read.csv(file_path)
+  df_original$day <- step
+
+  df_original$infectious <- "False"
+
+  infectious_indices <- which(df_original$eventstatus == 1 & df_original$day_inf > (df_original$day - 7) & df_original$day_inf < df_original$day + 1)
+
+  df_original$infectious[infectious_indices] <- "True"
+  
+  return(df_original)
+})
+
+final_data <- do.call(rbind, results_list)
+```
+
+```{r}
+prevalence_data <- final_data %>%
+  group_by(day) %>%
+  summarise(
+    total_count = n(),
+    infectious_count = sum(infectious == "True"),
+    prevalence = infectious_count / total_count
+  )
+
+prevalence_data <- add_row(prevalence_data,
+                           day = 0,
+                           total_count = 50000,
+                           infectious_count = 25,
+                           prevalence = 0.0005,
+                           .before = 1)
+
+prevalence_data$dummy <- "Dummy"
+
+prevalence_infectious <- ggplot(prevalence_data, aes(x = day, y = prevalence)) +
+  geom_line() +
+  geom_point() +
+  geom_point(aes(color = dummy), size = 0, show.legend = TRUE) +
+  scale_x_continuous(breaks = seq(min(prevalence_data$day), max(prevalence_data$day), by = 50)) +
+  scale_y_continuous(limits = c(0, NA),
+                     labels = scales::label_number(scale = 1, accuracy = 0.01)) +
+  scale_color_manual(values = c(Dummy = "transparent"), 
+                     guide = guide_legend(title = "Antibody Interval", 
+                                          override.aes = list(size = 0))) +
+  labs(
+    x = "Day",
+    y = "Prevalence (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+prevalence_infectious
+ggsave("prevalence_infectious.svg", plot = prevalence_infectious, width = 8, height = 3.2)
+```
+
+# Stacked area graph
+```{r}
+final_data$immunity_interval <- cut(
+  final_data$immunity_model,
+  breaks = seq(0, 1, by = 0.25),
+  include.lowest = TRUE,
+  right = FALSE,
+  labels = c("[0.00,0.25)", "[0.25,0.50)", "[0.50,0.75)", "[0.75,1.00]")
+)
+final_data$immunity_interval[final_data$immunity_model == 1] <- "[0.75,1.00]"
+```
+
+```{r}
+proportion_data <- final_data %>%
+  group_by(day, immunity_interval) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(day) %>%
+  mutate(total_day_count = sum(count)) %>%
+  mutate(proportion = count / total_day_count) %>%
+  ungroup()
+
+proportion_data <- add_row(proportion_data,
+                           day = 0,
+                           immunity_interval = "[0.00,0.25)",
+                           count = 25,
+                           total_day_count = 50000,
+                        proportion = 5e-04,
+                           .before = 1)
+
+proportion_data <- proportion_data %>%
+  group_by(immunity_interval) %>%
+  ungroup()
+
+custom_colors <- c("[0.00,0.25)" = "#b7e6a5",
+                   "[0.25,0.50)" = "#7ccba2",
+                   "[0.50,0.75)" = "#089099",
+                   "[0.75,1.00]" = "#045275")
+
+stacked_area_antibody <- ggplot() +
+  geom_area(data = proportion_data, aes(x = day, y = proportion, fill = immunity_interval),
+            position = 'fill', alpha = 0.6) +
+  scale_fill_manual(values = custom_colors) +
+  scale_x_continuous(breaks = seq(min(prevalence_data$day), max(prevalence_data$day), by = 50)) +
+  scale_y_continuous(limits = c(0, NA),
+                     labels = scales::label_number(scale = 1, accuracy = 0.01)) +
+  labs(
+    x = "Day",
+    y = "Proportion",
+    fill = "Antibody Interval"
+  ) +
+  theme_minimal()+
+  theme(
+    text = element_text(size = 12), 
+    axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+stacked_area_antibody
+ggsave("stacked_area_antibody.svg", plot = stacked_area_antibody, width = 8, height = 3.2)
+```
+
+
+
+
+
